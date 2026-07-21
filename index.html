@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#1B2A4A" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <title>WordLoom — connect · cross · discover</title>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <span class="brand">Word<span class="lm">Loom</span></span>
+      <span id="level-num">Level 1</span>
+      <span id="tier" class="tier easy">easy</span>
+    </header>
+
+    <div class="hud">
+      <span class="chip">Words <span id="progress">0/0</span></span>
+      <div class="bar"><div id="bar-fill"></div></div>
+      <span class="chip">Bonus <span id="bonus-count">0</span></span>
+    </div>
+
+    <div id="board-wrap"></div>
+    <div id="current"></div>
+    <div id="wheel-wrap"></div>
+
+    <div class="controls">
+      <button id="shuffle">🔀 Shuffle</button>
+      <button id="hint">💡 Hint</button>
+    </div>
+  </div>
+  <div id="toast"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

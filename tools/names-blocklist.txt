@@ -1,0 +1,48 @@
+# WordLoom names blocklist — CONSERVATIVE proper-noun-only starter.
+#
+# LESSON LEARNED (see README): a naive names list over-filters, because many
+# common words are also names (rose, ray, pat, sue, lee, mac, ken, peter, cole,
+# noel...). This list therefore contains ONLY tokens that are names AND are not
+# legitimate common English words. The robust production fix is to difference-
+# filter names against a curated common-word frequency dictionary at GENERATION
+# time (block a name only if it fails a word-validity/frequency threshold),
+# rather than subtracting names from finished output.
+#
+# Confirmed leaks flagged in step2-findings.md:
+eric
+vera
+noah
+han
+# Given names that are not common English words:
+alec
+saul
+beth
+theo
+juan
+jose
+pedro
+olga
+oscar
+owen
+aaron
+ellen
+emma
+emily
+brian
+kevin
+jason
+dennis
+denis
+gary
+larry
+barry
+jenny
+cindy
+wendy
+betty
+kathy
+peggy
+sally
+harry
+jerry
+terry
