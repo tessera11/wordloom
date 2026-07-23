@@ -1,8 +1,16 @@
 /**
- * Swipe-to-connect letter wheel (Canvas).
- * Pointer events cover touch + mouse. Emits the current spelled word on drag
- * and the final word on release. Duplicate wheel letters are supported because
- * each node is tracked by index, not by letter.
+ * WordLoom swipe letter-wheel (Canvas) — touch-tuned v2.
+ *
+ * What changed vs v1 (all aimed at real-device feel):
+ *  - HIT radius is separate from and larger than the VISUAL node radius, so
+ *    fingertips register reliably without the dots looking oversized.
+ *  - BACKTRACKING: drag back onto the second-to-last node to deselect the last
+ *    letter (the standard Wordscapes/word-connect behaviour).
+ *  - Scroll/gesture lock while dragging (touch-action:none + preventDefault).
+ *  - Pointer capture so a drag that leaves the canvas still tracks.
+ *  - Snappier trail + selected-node scale pop; haptic tick on each new letter.
+ *  - All feel constants live in TUNING at the top — change numbers, reload,
+ *    re-test (see PLAYTEST.md).
  */
 
 const PALETTE = {
@@ -13,13 +21,26 @@ const PALETTE = {
   ink: "#0E1729",
 };
 
+// ---- TUNING: adjust these during playtesting -------------------------------
+const TUNING = {
+  nodeRadiusFactor: 0.090,   // visual dot radius, relative to canvas size
+  hitRadiusFactor: 0.130,    // touch target radius (>= nodeRadius). Bump if selects feel finicky.
+  wheelRadiusFactor: 0.360,  // ring radius the dots sit on
+  trailWidthFactor: 0.038,   // amber connector thickness
+  selectedScale: 1.14,       // how much a selected dot pops
+  hapticMs: 8,               // vibration on each new letter (0 = off)
+  minWordLength: 3,
+  maxCanvasPx: 440,
+};
+// ----------------------------------------------------------------------------
+
 interface Node { ch: string; x: number; y: number; idx: number; }
 
 export class Wheel {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private nodes: Node[] = [];
-  private path: number[] = [];   // indices in draw order
+  private path: number[] = [];
   private dragging = false;
   private pointer = { x: 0, y: 0 };
   private letters: string[];
@@ -37,9 +58,13 @@ export class Wheel {
     this.resize();
     window.addEventListener("resize", () => this.resize());
 
-    this.canvas.addEventListener("pointerdown", (e) => this.start(e));
-    this.canvas.addEventListener("pointermove", (e) => this.move(e));
-    window.addEventListener("pointerup", () => this.end());
+    // Pointer events cover touch + mouse + pen.
+    this.canvas.addEventListener("pointerdown", (e) => this.start(e), { passive: false });
+    this.canvas.addEventListener("pointermove", (e) => this.move(e), { passive: false });
+    this.canvas.addEventListener("pointerup", () => this.end());
+    this.canvas.addEventListener("pointercancel", () => this.end());
+    // Belt-and-braces: stop the page scrolling/zooming mid-swipe.
+    this.canvas.addEventListener("touchmove", (e) => { if (this.dragging) e.preventDefault(); }, { passive: false });
   }
 
   shuffle() {
@@ -50,8 +75,10 @@ export class Wheel {
     this.layout(); this.draw();
   }
 
+  private cssSize() { return this.canvas.width / (window.devicePixelRatio || 1); }
+
   private resize() {
-    const size = Math.min(container_width(this.canvas), 420);
+    const size = Math.min(this.canvas.parentElement?.clientWidth ?? 360, TUNING.maxCanvasPx);
     const dpr = window.devicePixelRatio || 1;
     this.canvas.width = size * dpr;
     this.canvas.height = size * dpr;
@@ -62,8 +89,8 @@ export class Wheel {
   }
 
   private layout() {
-    const size = this.canvas.width / (window.devicePixelRatio || 1);
-    const cx = size / 2, cy = size / 2, R = size * 0.36;
+    const size = this.cssSize();
+    const cx = size / 2, cy = size / 2, R = size * TUNING.wheelRadiusFactor;
     this.nodes = this.letters.map((ch, i) => {
       const ang = -Math.PI / 2 + (i * 2 * Math.PI) / this.letters.length;
       return { ch, x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang), idx: i };
@@ -71,11 +98,13 @@ export class Wheel {
   }
 
   private nodeAt(x: number, y: number): Node | null {
-    const rNode = (this.canvas.width / (window.devicePixelRatio || 1)) * 0.11;
+    const hit = this.cssSize() * TUNING.hitRadiusFactor;
+    let best: Node | null = null, bestD = Infinity;
     for (const n of this.nodes) {
-      if (Math.hypot(n.x - x, n.y - y) <= rNode) return n;
+      const d = Math.hypot(n.x - x, n.y - y);
+      if (d <= hit && d < bestD) { best = n; bestD = d; } // nearest-within-radius wins
     }
-    return null;
+    return best;
   }
 
   private localPos(e: PointerEvent) {
@@ -84,21 +113,32 @@ export class Wheel {
   }
 
   private start(e: PointerEvent) {
+    e.preventDefault();
     this.dragging = true;
     this.path = [];
-    this.canvas.setPointerCapture(e.pointerId);
+    try { this.canvas.setPointerCapture(e.pointerId); } catch { /* ok */ }
     this.move(e);
   }
 
   private move(e: PointerEvent) {
     if (!this.dragging) return;
+    e.preventDefault();
     const p = this.localPos(e);
     this.pointer = p;
     const n = this.nodeAt(p.x, p.y);
-    if (n && !this.path.includes(n.idx)) {
-      this.path.push(n.idx);
-      this.onUpdate(this.currentWord());
-      buzz();
+    if (n) {
+      const pos = this.path.indexOf(n.idx);
+      if (pos === -1) {
+        // new letter
+        this.path.push(n.idx);
+        this.onUpdate(this.currentWord());
+        this.buzz();
+      } else if (pos === this.path.length - 2) {
+        // BACKTRACK: dragged back to the previous node → drop the last letter
+        this.path.pop();
+        this.onUpdate(this.currentWord());
+        this.buzz();
+      }
     }
     this.draw();
   }
@@ -109,27 +149,31 @@ export class Wheel {
     const word = this.currentWord();
     this.path = [];
     this.draw();
-    if (word.length >= 3) this.onSubmit(word);
+    if (word.length >= TUNING.minWordLength) this.onSubmit(word);
   }
 
   private currentWord(): string {
     return this.path.map((i) => this.nodes[i].ch).join("");
   }
 
+  private buzz() {
+    if (TUNING.hapticMs > 0 && "vibrate" in navigator) navigator.vibrate?.(TUNING.hapticMs);
+  }
+
   private draw() {
     const ctx = this.ctx;
-    const size = this.canvas.width / (window.devicePixelRatio || 1);
+    const size = this.cssSize();
     ctx.clearRect(0, 0, size, size);
 
     // hub
     ctx.fillStyle = PALETTE.linen;
-    roundRect(ctx, size * 0.08, size * 0.08, size * 0.84, size * 0.84, size * 0.12);
+    roundRect(ctx, size * 0.06, size * 0.06, size * 0.88, size * 0.88, size * 0.12);
     ctx.fill();
 
     // trail
     if (this.path.length) {
       ctx.strokeStyle = PALETTE.amber;
-      ctx.lineWidth = size * 0.035;
+      ctx.lineWidth = size * TUNING.trailWidthFactor;
       ctx.lineJoin = "round"; ctx.lineCap = "round";
       ctx.beginPath();
       this.path.forEach((idx, i) => {
@@ -141,11 +185,12 @@ export class Wheel {
     }
 
     // nodes
-    const r = size * 0.09;
+    const r = size * TUNING.nodeRadiusFactor;
     this.nodes.forEach((n) => {
       const active = this.path.includes(n.idx);
+      const rr = active ? r * TUNING.selectedScale : r;
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.arc(n.x, n.y, rr, 0, Math.PI * 2);
       ctx.fillStyle = active ? PALETTE.amber : PALETTE.sage;
       ctx.fill();
       ctx.fillStyle = active ? PALETTE.ink : PALETTE.linen;
@@ -164,11 +209,4 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
-}
-function container_width(el: HTMLElement): number {
-  const p = el.parentElement;
-  return p ? p.clientWidth : 360;
-}
-function buzz() {
-  if ("vibrate" in navigator) navigator.vibrate?.(8);
 }
