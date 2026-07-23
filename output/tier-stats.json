@@ -1,0 +1,23 @@
+[
+  {
+    "tier": "easy",
+    "target": 90,
+    "produced": 90,
+    "scanned": 102,
+    "candidatePoolSize": 374
+  },
+  {
+    "tier": "medium",
+    "target": 110,
+    "produced": 110,
+    "scanned": 121,
+    "candidatePoolSize": 1599
+  },
+  {
+    "tier": "hard",
+    "target": 100,
+    "produced": 100,
+    "scanned": 119,
+    "candidatePoolSize": 3177
+  }
+]
