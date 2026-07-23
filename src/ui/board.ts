@@ -1,24 +1,52 @@
 import type { Level } from "../types";
 
 /**
- * Crossword board renderer (DOM / CSS grid).
- * Chosen over canvas for accessibility (each cell is a real element),
- * trivially animatable fills, and crisp text at any DPR.
+ * Crossword board renderer (DOM / CSS grid) with JS-driven fit sizing.
+ *
+ * The board sizes itself to fill the #board-wrap box while keeping every cell
+ * square, using the SMALLER of (availWidth/cols) and (availHeight/rows) as the
+ * cell size. This guarantees the whole puzzle is visible without scrolling and
+ * without pushing the wheel/buttons off-screen — for any grid shape.
  */
 export class Board {
   el: HTMLElement;
   private cells = new Map<string, HTMLElement>(); // "r,c" -> element
-  constructor(container: HTMLElement, private level: Level) {
+  private gap = 3;
+  private ro?: ResizeObserver;
+
+  constructor(private container: HTMLElement, private level: Level) {
     this.el = document.createElement("div");
     this.el.className = "board";
     this.el.style.gridTemplateColumns = `repeat(${level.cols}, 1fr)`;
     this.el.style.gridTemplateRows = `repeat(${level.rows}, 1fr)`;
+    this.el.style.gap = `${this.gap}px`;
     container.innerHTML = "";
     container.appendChild(this.el);
     this.render();
+    this.fit();
+
+    // Refit whenever the available space changes (rotation, keyboard, chrome).
+    this.ro = new ResizeObserver(() => this.fit());
+    this.ro.observe(container);
+    window.addEventListener("resize", this.fit);
   }
 
   private key(r: number, c: number) { return `${r},${c}`; }
+
+  /** Size the board to fit its container with square cells. */
+  private fit = () => {
+    const availW = this.container.clientWidth;
+    const availH = this.container.clientHeight;
+    if (availW <= 0 || availH <= 0) return;
+    const { rows, cols } = this.level;
+    const cellW = (availW - (cols - 1) * this.gap) / cols;
+    const cellH = (availH - (rows - 1) * this.gap) / rows;
+    const cell = Math.max(8, Math.floor(Math.min(cellW, cellH)));
+    const w = cell * cols + (cols - 1) * this.gap;
+    const h = cell * rows + (rows - 1) * this.gap;
+    this.el.style.width = `${w}px`;
+    this.el.style.height = `${h}px`;
+  };
 
   private render() {
     const { rows, cols, table } = this.level;
@@ -31,7 +59,7 @@ export class Board {
           div.dataset.letter = table[r][c];
           const span = document.createElement("span");
           span.className = "glyph";
-          span.textContent = "";            // hidden until revealed
+          span.textContent = "";
           div.appendChild(span);
           this.cells.set(this.key(r, c), div);
         }
@@ -40,7 +68,6 @@ export class Board {
     }
   }
 
-  /** Reveal a word's cells with a stagger animation. Returns true if newly filled. */
   revealWord(word: string): boolean {
     const placed = this.level.words.find(
       (w) => w.answer.toLowerCase() === word.toLowerCase() && w.orientation !== "none"
@@ -63,7 +90,6 @@ export class Board {
     return newly;
   }
 
-  /** Free hint: reveal a single not-yet-filled letter. */
   revealHintLetter(): boolean {
     for (const [, cell] of this.cells) {
       if (!cell.classList.contains("filled")) {
@@ -74,5 +100,11 @@ export class Board {
       }
     }
     return false;
+  }
+
+  /** Call when tearing down a level to avoid leaking observers. */
+  destroy() {
+    this.ro?.disconnect();
+    window.removeEventListener("resize", this.fit);
   }
 }

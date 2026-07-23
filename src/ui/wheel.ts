@@ -1,16 +1,19 @@
 /**
- * WordLoom swipe letter-wheel (Canvas) — touch-tuned v2.
+ * WordLoom swipe letter-wheel (Canvas) — touch-tuned v2 + height-aware sizing.
  *
- * What changed vs v1 (all aimed at real-device feel):
- *  - HIT radius is separate from and larger than the VISUAL node radius, so
- *    fingertips register reliably without the dots looking oversized.
- *  - BACKTRACKING: drag back onto the second-to-last node to deselect the last
- *    letter (the standard Wordscapes/word-connect behaviour).
- *  - Scroll/gesture lock while dragging (touch-action:none + preventDefault).
- *  - Pointer capture so a drag that leaves the canvas still tracks.
- *  - Snappier trail + selected-node scale pop; haptic tick on each new letter.
- *  - All feel constants live in TUNING at the top — change numbers, reload,
- *    re-test (see PLAYTEST.md).
+ * v2 feel improvements:
+ *  - HIT radius separate from and larger than the VISUAL node radius.
+ *  - BACKTRACKING: drag back onto the previous node to deselect the last letter.
+ *  - Scroll/gesture lock while dragging.
+ *  - Pointer capture so a drag leaving the canvas still tracks.
+ *  - Selected-node pop + haptic tick.
+ *
+ * SIZING FIX (this build): the canvas is capped by the SMALLER of the parent
+ * width AND a share of the viewport height (viewportHeightFactor). This stops
+ * the wheel eating the space the Shuffle/Hint buttons need — the previous
+ * version sized by width only, which pushed the buttons off-screen on tall grids.
+ *
+ * All feel + sizing constants live in TUNING (see PLAYTEST.md).
  */
 
 const PALETTE = {
@@ -21,16 +24,18 @@ const PALETTE = {
   ink: "#0E1729",
 };
 
-// ---- TUNING: adjust these during playtesting -------------------------------
+// ---- TUNING: adjust during playtesting -------------------------------------
 const TUNING = {
-  nodeRadiusFactor: 0.090,   // visual dot radius, relative to canvas size
-  hitRadiusFactor: 0.130,    // touch target radius (>= nodeRadius). Bump if selects feel finicky.
-  wheelRadiusFactor: 0.360,  // ring radius the dots sit on
-  trailWidthFactor: 0.038,   // amber connector thickness
-  selectedScale: 1.14,       // how much a selected dot pops
-  hapticMs: 8,               // vibration on each new letter (0 = off)
+  nodeRadiusFactor: 0.090,     // visual dot radius (relative to canvas size)
+  hitRadiusFactor: 0.130,      // touch target radius (>= nodeRadius)
+  wheelRadiusFactor: 0.360,    // ring radius the dots sit on
+  trailWidthFactor: 0.038,     // amber connector thickness
+  selectedScale: 1.14,         // selected-dot pop
+  hapticMs: 8,                 // vibration per new letter (0 = off)
   minWordLength: 3,
-  maxCanvasPx: 440,
+  maxCanvasPx: 360,            // hard ceiling
+  viewportHeightFactor: 0.30,  // wheel never taller than 30% of viewport height
+  widthFactor: 0.78,          // …nor wider than 78% of its parent's width
 };
 // ----------------------------------------------------------------------------
 
@@ -56,14 +61,12 @@ export class Wheel {
     container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
     this.resize();
-    window.addEventListener("resize", () => this.resize());
+    window.addEventListener("resize", this.resize);
 
-    // Pointer events cover touch + mouse + pen.
     this.canvas.addEventListener("pointerdown", (e) => this.start(e), { passive: false });
     this.canvas.addEventListener("pointermove", (e) => this.move(e), { passive: false });
     this.canvas.addEventListener("pointerup", () => this.end());
     this.canvas.addEventListener("pointercancel", () => this.end());
-    // Belt-and-braces: stop the page scrolling/zooming mid-swipe.
     this.canvas.addEventListener("touchmove", (e) => { if (this.dragging) e.preventDefault(); }, { passive: false });
   }
 
@@ -77,8 +80,14 @@ export class Wheel {
 
   private cssSize() { return this.canvas.width / (window.devicePixelRatio || 1); }
 
-  private resize() {
-    const size = Math.min(this.canvas.parentElement?.clientWidth ?? 360, TUNING.maxCanvasPx);
+  private resize = () => {
+    const parentW = this.canvas.parentElement?.clientWidth ?? 360;
+    // Fit by the smaller of: parent width, a share of viewport height, hard cap.
+    const size = Math.floor(Math.min(
+      parentW * TUNING.widthFactor,
+      window.innerHeight * TUNING.viewportHeightFactor,
+      TUNING.maxCanvasPx
+    ));
     const dpr = window.devicePixelRatio || 1;
     this.canvas.width = size * dpr;
     this.canvas.height = size * dpr;
@@ -86,7 +95,7 @@ export class Wheel {
     this.canvas.style.height = `${size}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.layout(); this.draw();
-  }
+  };
 
   private layout() {
     const size = this.cssSize();
@@ -102,7 +111,7 @@ export class Wheel {
     let best: Node | null = null, bestD = Infinity;
     for (const n of this.nodes) {
       const d = Math.hypot(n.x - x, n.y - y);
-      if (d <= hit && d < bestD) { best = n; bestD = d; } // nearest-within-radius wins
+      if (d <= hit && d < bestD) { best = n; bestD = d; }
     }
     return best;
   }
@@ -129,13 +138,11 @@ export class Wheel {
     if (n) {
       const pos = this.path.indexOf(n.idx);
       if (pos === -1) {
-        // new letter
         this.path.push(n.idx);
         this.onUpdate(this.currentWord());
         this.buzz();
       } else if (pos === this.path.length - 2) {
-        // BACKTRACK: dragged back to the previous node → drop the last letter
-        this.path.pop();
+        this.path.pop();                 // backtrack
         this.onUpdate(this.currentWord());
         this.buzz();
       }
@@ -165,12 +172,10 @@ export class Wheel {
     const size = this.cssSize();
     ctx.clearRect(0, 0, size, size);
 
-    // hub
     ctx.fillStyle = PALETTE.linen;
     roundRect(ctx, size * 0.06, size * 0.06, size * 0.88, size * 0.88, size * 0.12);
     ctx.fill();
 
-    // trail
     if (this.path.length) {
       ctx.strokeStyle = PALETTE.amber;
       ctx.lineWidth = size * TUNING.trailWidthFactor;
@@ -184,7 +189,6 @@ export class Wheel {
       ctx.stroke();
     }
 
-    // nodes
     const r = size * TUNING.nodeRadiusFactor;
     this.nodes.forEach((n) => {
       const active = this.path.includes(n.idx);
